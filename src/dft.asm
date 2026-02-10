@@ -6,7 +6,7 @@ section .rodata use32
 
 section .text use32
 
-	global dft_simple		;vector<Complex> dft_simple(vector<Complex>* samples)
+	global dft_simple		;void dft_simple(vector<Complex>* outCoeffs, vector<float>* samples)
 	
 	extern complex_createExp
 	extern complex_createGeo
@@ -15,12 +15,63 @@ section .text use32
 	extern complex_mul
 	extern complex_copy
 	
+	extern vector_push_back_buffer
+	extern vector_clear
 	extern vector_at
 	
 dft_simple:
+	push ebp
+	push esi
+	push edi
+	push ebx
+	mov ebp, esp
+	
+	sub esp, 8			;temp		8
+	sub esp, 4			;current w	12
+	
+	mov dword[ebp-12], 0
+	
+	;clear outCoeffs
+	push dword[ebp+20]
+	call vector_clear
+	
+	mov eax, dword[ebp+24]
+	mov ebx, dword[eax]			;max index in ebx
+	xor esi, esi				;index in esi
+	cmp ebx, 0
+	jle dft_simple_loop_end
+	dft_simple_loop_start:
+		lea ecx, [ebp-8]
+		push dword[ebp-12]
+		push dword[ebp+24]
+		push ecx
+		call dft_calcCoeff_internal
+		add esp, 12
+		
+		lea ecx, [ebp-8]
+		push ecx
+		push dword[ebp+20]
+		call vector_push_back_buffer
+		
+		movss xmm0, dword[ebp-12]
+		addss xmm0, dword[PI2]
+		movss dword[ebp-12], xmm0
+		
+		inc esi
+		cmp esi, ebx
+		jl dft_simple_loop_start
+		
+	dft_simple_loop_end:
+	
+	mov esp, ebp
+	pop ebx
+	pop edi
+	pop esi
+	pop ebp
+	ret
+	
 
-
-;void dft_calcCoeff_internal(Complex* result, vector<Complex> samples, float angularFreq)
+;void dft_calcCoeff_internal(Complex* result, vector<float>* samples, float angularFreq)
 dft_calcCoeff_internal:
 	push ebp
 	push esi

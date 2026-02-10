@@ -31,8 +31,13 @@ section .text use32
 	global complex_sub				;void complex_sub(Complex* result, Complex* a, Complex* b);
 	global complex_mul				;void complex_mul(Complex* result, Complex* a, Complex* b);
 	global complex_div				;void complex_div(Complex* result, Complex* a, Complex* b);
+	global complex_mulScalar		;void complex_mulScalar(Complex* result, Complex* a, float s)
 	
 	global complex_copy				;void complex_copy(Complex* dst, Complex* src)
+	
+	global complex_print			;void complex_print(Complex*)
+	
+	extern my_printf
 	
 complex_createGeo:
 	mov eax, dword[esp+4]
@@ -141,6 +146,16 @@ complex_div:
 	
 	ret
 	
+complex_mulScalar:
+	mov eax, dword[esp+8]
+	movq xmm0, qword[eax]
+	movss xmm1, dword[esp+12]
+	shufps xmm1, xmm1, 0
+	mulps xmm0, xmm1
+	mov ecx, dword[esp+4]
+	movq qword[ecx], xmm0
+	ret
+	
 	
 complex_copy:
 	mov eax, dword[esp+4]
@@ -150,6 +165,22 @@ complex_copy:
 	mov edx, dword[ecx+4]
 	mov dword[eax+4], edx
 	ret
+	
+	
+complex_print:
+	push ebp
+	mov ebp, esp
+	
+	mov eax, dword[ebp+8]
+	push dword[eax+4]
+	push dword[eax]
+	push complex_print_format
+	call my_printf
+	
+	mov esp, ebp
+	pop ebp
+	ret
+	complex_print_format db "%f + %fj",10,0
 	
 	
 ;void complex_calcSin(float* buffer, float num)
