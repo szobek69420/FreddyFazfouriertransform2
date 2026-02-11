@@ -21,6 +21,9 @@ section .rodata use32
 	dd -0.5
 	dd 0.041666666667
 	dd -0.001388888889
+	
+	print_int_nl db "%d",10,0
+	print_float_nl db "%f",10,0
 
 section .text use32
 
@@ -33,9 +36,15 @@ section .text use32
 	global complex_div				;void complex_div(Complex* result, Complex* a, Complex* b);
 	global complex_mulScalar		;void complex_mulScalar(Complex* result, Complex* a, float s)
 	
+	global complex_real				;float* complex_real(Complex*)
+	global complex_img				;float* complex_img(Complex*)
+	
+	global complex_abs				;void complex_abs(Complex*, float* outAbs)
+	global complex_arg				;void complex_arg(Complex*, float* outArg)
+	
 	global complex_copy				;void complex_copy(Complex* dst, Complex* src)
 	
-	global complex_print			;void complex_print(Complex*)
+	global complex_print			;void complex_print(Complex*, int expForm)
 	
 	extern my_printf
 	
@@ -102,15 +111,16 @@ complex_mul:
 	
 	movq xmm0, qword[eax]
 	movq xmm1, qword[ecx]
-	mulps xmm0, xmm1
-	hsubps xmm0, xmm2
-	movss dword[edx], xmm0
 	
-	movss xmm3, dword[eax]
-	mulss xmm3, dword[ecx+4]
-	movss xmm4, dword[ecx]
-	mulss xmm4, dword[eax+4]
-	addss xmm3, xmm4
+	movq xmm2, xmm0
+	mulps xmm2, xmm1
+	hsubps xmm2, xmm2
+	movss dword[edx], xmm2
+	
+	movq xmm3, xmm0
+	shufps xmm3, xmm3, 0b00000001
+	mulps xmm3, xmm1
+	haddps xmm3, xmm3
 	movss dword[edx+4], xmm3
 	
 	ret
@@ -121,30 +131,29 @@ complex_div:
 	mov ecx, dword[esp+12]
 	mov edx, dword[esp+4]
 	
-	movq xmm0, qword[ecx]
+	movq xmm0, qword[eax]
+	movq xmm1, qword[ecx]
 	
-	movq xmm1, xmm0
+	movq xmm2, xmm0
+	mulps xmm2, xmm1
+	haddps xmm2, xmm2
+	
+	movq xmm3, xmm0
+	shufps xmm3, xmm3, 0b00000001
+	mulps xmm3, xmm1
+	hsubps xmm3, xmm3
+	
+	mulps xmm1, xmm1
 	haddps xmm1, xmm1
-	mulss xmm1, dword[eax]
+	rcpss xmm1, xmm1
 	
-	movss xmm2, dword[eax+4]
-	mulss xmm2, dword[ecx]
-	movss xmm3, dword[eax]
-	mulss xmm3, dword[ecx+4]
-	subss xmm2, xmm3
-	
-	movq xmm4, xmm0
-	mulps xmm4, xmm4
-	haddps xmm4, xmm4
-	rcpss xmm4, xmm4
-	
-	mulss xmm1, xmm4
-	mulss xmm2, xmm4
-	
-	movss dword[edx], xmm1
-	movss dword[edx+4], xmm2
+	mulss xmm2, xmm1
+	mulss xmm3, xmm1
+	movss dword[edx], xmm2
+	movss dword[edx+4], xmm3
 	
 	ret
+	
 	
 complex_mulScalar:
 	mov eax, dword[esp+8]
@@ -154,6 +163,68 @@ complex_mulScalar:
 	mulps xmm0, xmm1
 	mov ecx, dword[esp+4]
 	movq qword[ecx], xmm0
+	ret
+	
+	
+complex_real:
+	mov eax, dword[esp+4]
+	ret
+	
+	
+complex_img:
+	mov eax, dword[esp+4]
+	add eax, 4
+	ret
+	
+	
+complex_abs:
+	mov eax, dword[esp+4]
+	movq xmm0, qword[eax]
+	mulps xmm0, xmm0
+	haddps xmm0, xmm0
+	sqrtss xmm0, xmm0
+	mov ecx, dword[esp+8]
+	movss dword[ecx], xmm0
+	ret
+	
+	
+complex_arg:
+	push ebp
+	mov ebp, esp
+	
+	sub esp, 4			;result		4
+	
+	mov eax, dword[ebp+8]
+	lea ecx, [ebp-4]
+	
+	fld dword[eax+4]
+	fld dword[eax]
+	fpatan
+	fstp dword[ecx]
+	mov edx, dword[eax+4]
+	xor edx, dword[ecx]
+	test edx, 0x80000000
+	jz complex_arg_end
+		test dword[eax+4], 0x80000000
+		jnz complex_arg_add
+			movss xmm0, dword[ecx]
+			subss xmm0, dword[PI]
+			movss dword[ecx], xmm0
+			jmp complex_arg_end
+			
+		complex_arg_add:
+			movss xmm0, dword[ecx]
+			addss xmm0, dword[PI]
+			movss dword[ecx], xmm0
+			jmp complex_arg_end
+	
+	complex_arg_end:
+	mov eax, dword[ebp-4]
+	mov ecx, dword[ebp+12]
+	mov dword[ecx], eax
+	
+	mov esp, ebp
+	pop ebp
 	ret
 	
 	
@@ -171,16 +242,38 @@ complex_print:
 	push ebp
 	mov ebp, esp
 	
-	mov eax, dword[ebp+8]
-	push dword[eax+4]
-	push dword[eax]
-	push complex_print_format
-	call my_printf
+	test dword[ebp+12], 0xffffffff
+	jnz complex_print_exp
+	complex_print_geo:
+		mov eax, dword[ebp+8]
+		push dword[eax+4]
+		push dword[eax]
+		push complex_print_format_geo
+		call my_printf
+		jmp complex_print_end
 	
+	complex_print_exp:
+		sub esp, 4
+		mov eax, esp
+		push eax
+		push dword[ebp+8]
+		call complex_arg
+		add esp, 4
+		mov eax, esp
+		push eax
+		push dword[ebp+8]
+		call complex_abs
+		add esp, 8
+		push complex_print_format_exp
+		call my_printf
+		jmp complex_print_end
+	
+	complex_print_end:
 	mov esp, ebp
 	pop ebp
 	ret
-	complex_print_format db "%f + %fj",10,0
+	complex_print_format_geo db "%f + %fj",10,0
+	complex_print_format_exp db "%f * e^%fj",10,0
 	
 	
 ;void complex_calcSin(float* buffer, float num)

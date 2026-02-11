@@ -28,7 +28,7 @@ section .text use32
 		sub esp, 16			;coeff vector		16
 		
 		lea eax, [ebp-16]
-		push 4
+		push 8
 		push eax
 		call vector_init
 		
@@ -45,9 +45,10 @@ section .text use32
 		jmp main_printCoeff_done
 		main_printCoeff_helper:
 			mov eax, dword[esp+4]
+			push 69
 			push eax
 			call complex_print
-			add esp, 4
+			add esp, 8
 			ret
 		main_printCoeff_done:
 		

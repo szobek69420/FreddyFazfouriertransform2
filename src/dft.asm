@@ -13,6 +13,7 @@ section .text use32
 	extern complex_add
 	extern complex_sub
 	extern complex_mul
+	extern complex_mulScalar
 	extern complex_copy
 	
 	extern vector_push_back_buffer
@@ -52,6 +53,7 @@ dft_simple:
 		push ecx
 		push dword[ebp+20]
 		call vector_push_back_buffer
+		add esp, 8
 		
 		movss xmm0, dword[ebp-12]
 		addss xmm0, dword[PI2]
@@ -123,10 +125,10 @@ dft_calcCoeff_internal:
 		
 		lea ecx, [ebp-16]
 		lea edx, [ebp-32]
+		push dword[eax]
 		push ecx
-		push eax
 		push edx
-		call complex_mul
+		call complex_mulScalar
 		
 		lea eax, [ebp-32]
 		lea ecx, [ebp-24]
