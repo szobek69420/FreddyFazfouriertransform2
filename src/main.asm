@@ -4,8 +4,8 @@ section .rodata use32
 	test_text db "sus amogus",10,0
 	
 	test_sample_vector:
-	dd 10, 10, 4, test_samples
-	test_samples dd 0.000, 0.951, 0.588, -0.588, -0.951, 0.000, 0.951, 0.588, -0.588, -0.951
+	dd 16, 16, 4, test_samples
+	test_samples dd 0.000, 0.049, 0.098, 0.147, 0.195, 0.243, 0.290, 0.337, 0.383, 0.428, 0.471, 0.514, 0.556, 0.596, 0.634, 0.672
 
 section .text use32
 	
@@ -17,6 +17,7 @@ section .text use32
 	extern vector_init
 	extern vector_for_each
 	extern dft_simple
+	extern dft_fft
 	extern complex_print
 	
 	..start:
@@ -35,7 +36,7 @@ section .text use32
 		lea ecx, [ebp-16]
 		push test_sample_vector
 		push ecx
-		call dft_simple
+		call dft_fft
 		
 		lea ecx, [ebp-16]
 		push 0
