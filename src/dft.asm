@@ -3,6 +3,10 @@
 section .rodata use32
 	ONE dd 1.0
 	PI2 dd 6.28318530718
+	
+	print_int_nl db "%d",10,0
+	
+	test_text db "sussy baka",10,0
 
 section .text use32
 
@@ -18,6 +22,7 @@ section .text use32
 	extern complex_mul
 	extern complex_mulScalar
 	extern complex_copy
+	extern complex_print
 	
 	extern vector_init
 	extern vector_destroy
@@ -101,7 +106,7 @@ dft_fft:
 	
 	push dword[ebp+24]
 	push dword[ebp+20]
-	call dft_calcCoeff_internal
+	call dft_fft_calculateFft_internal
 	
 	
 	dft_fft_end:
@@ -143,6 +148,7 @@ dft_calcCoeff_internal:
 	mulss xmm0, dword[ebp+28]
 	sub esp, 4
 	movss dword[esp], xmm0
+	xor dword[esp], 0x80000000
 	push dword[ONE]
 	lea eax, [ebp-8]
 	push eax
@@ -238,12 +244,13 @@ dft_fft_calculateFft_internal:
 	call vector_clear
 	
 	;check if the samples count is 0 or 1
-	mov eax, dword[ebp+20]
+	mov eax, dword[ebp+24]
+	mov eax, dword[eax]
 	test eax, eax
 	jz dft_fft_calculateFft_internal_end
 	
 	cmp eax, 1
-	jnz dft_fft_calculateFft_internal_multiple_samples
+	jne dft_fft_calculateFft_internal_multiple_samples
 		push 0
 		push dword[ebp+24]
 		call vector_at
@@ -253,7 +260,7 @@ dft_fft_calculateFft_internal:
 		push ecx
 		call complex_createGeo
 		add esp, 12
-		push dword[ebp+24]
+		push dword[ebp+20]
 		call vector_push_back
 		jmp dft_fft_calculateFft_internal_end
 		
@@ -262,7 +269,7 @@ dft_fft_calculateFft_internal:
 	;separate the samples
 	mov eax, dword[ebp+24]
 	mov eax, dword[eax]
-	shl eax, 1
+	shr eax, 1
 	mov dword[ebp-68], eax
 	
 	lea eax, [ebp-16]
@@ -295,6 +302,17 @@ dft_fft_calculateFft_internal:
 		
 	
 	;calculate the smaller dfts
+	lea eax, [ebp-48]
+	push 8
+	push eax
+	call vector_init
+	
+	lea ecx, [ebp-64]
+	push 8
+	push ecx
+	call vector_init
+	
+	
 	lea eax, [ebp-16]
 	lea ecx, [ebp-48]
 	push eax
@@ -323,7 +341,7 @@ dft_fft_calculateFft_internal:
 	
 	lea edx, [ebp-84]
 	push 0
-	push 0
+	push 0x3f800000
 	push edx
 	call complex_createGeo
 	
