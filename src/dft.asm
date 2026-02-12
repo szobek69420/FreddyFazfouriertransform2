@@ -7,6 +7,8 @@ section .rodata use32
 	print_int_nl db "%d",10,0
 	
 	test_text db "sussy baka",10,0
+	
+	SIZE_OF_COMPLEX equ 8		;size of complex is assumed to be 8 regardless, this define is only for code readability
 
 section .text use32
 
@@ -14,6 +16,8 @@ section .text use32
 	global dft_fft			;void dft_fft(vector<Complex*> outCoeffs, vector<float*> samples)
 	
 	extern my_printf
+	extern my_malloc
+	extern my_free
 	
 	extern complex_createExp
 	extern complex_createGeo
@@ -90,10 +94,18 @@ dft_fft:
 	push ebx
 	mov ebp, esp
 	
+	sub esp, 4			;coeff array			4
+	sub esp, 4			;log2(signal length)+1	8
+	
 	;check if the number is a zweierpotenz
+	mov dword[ebp-8], 0
+	
 	mov eax, dword[ebp+24]
 	mov ebx, dword[eax]
+	test ebx, ebx
+	jz dft_fft_check_power_loop_end
 	dft_fft_check_power_loop_start:
+		inc dword[ebp-8]
 		sar ebx, 1
 		jnc dft_fft_check_power_loop_continue
 			test ebx, 0xffffffff
@@ -104,10 +116,52 @@ dft_fft:
 		
 	dft_fft_check_power_loop_end:
 	
-	push dword[ebp+24]
-	push dword[ebp+20]
+	;alloc the coeff array
+	mov eax, dword[ebp+24]
+	mov eax, dword[eax]
+	imul eax, dword[ebp-8]
+	imul eax, SIZE_OF_COMPLEX
+	push eax
+	call my_malloc
+	mov dword[ebp-4], eax
+	
+	;do the dft
+	mov eax, dword[ebp+24]
+	push dword[eax]
+	push 1
+	push dword[eax+12]
+	mov ecx, dword[ebp+24]
+	mov ecx, dword[ecx]
+	imul ecx, dword[ebp-8]
+	push ecx
+	push dword[ebp-4]
 	call dft_fft_calculateFft_internal
 	
+	;move the coeffs into the outBuffer
+	push dword[ebp+20]
+	call vector_clear
+	
+	mov eax, dword[ebp+24]
+	mov ebx, dword[eax]			;loop end in ebx
+	mov esi, dword[ebp-4]
+	xor edi, edi				;index in esi
+	cmp ebx, 0
+	jle dft_fft_move_loop_end
+	dft_fft_move_loop_start:
+		lea eax, [esi+SIZE_OF_COMPLEX*edi]
+		push eax
+		push dword[ebp+20]
+		call vector_push_back_buffer
+		add esp, 8
+		
+		inc edi
+		cmp edi, ebx
+		jl dft_fft_move_loop_start
+	dft_fft_move_loop_end:
+		
+	;dealloc the coeff array
+	push dword[ebp-4]
+	call my_free
 	
 	dft_fft_end:
 	mov esp, ebp
@@ -222,7 +276,13 @@ dft_calcCoeff_internal:
 	
 
 ;assumes that the sample count is a power of 2
-;void dft_fft_calculateFft_internal(vector<Complex>* outCoeffs, vector<float>* samples)
+;void dft_fft_calculateFft_internal(
+;	Complex* outCoeffs,					//the space for the coefficient of this and the following smaller dfts
+;	int outCoeffsLength,				//should be (log2(samplesJumpCount)+1)
+;	float* samples,						//first sample should always be a considered one
+;	int samplesJump,					//the difference of indices of two subsequent considered samples
+;	int samplesJumpCount				//the number of considered samples in the subsignal
+;)
 dft_fft_calculateFft_internal:
 	push ebp
 	push esi
@@ -230,192 +290,135 @@ dft_fft_calculateFft_internal:
 	push ebx
 	mov ebp, esp
 	
-	sub esp, 16			;even samples		16
-	sub esp, 16			;odd samples		32
-	sub esp, 16			;even out coeffs	48
-	sub esp, 16			;odd out coeffs		64
-	sub esp, 4			;samples per 2		68
-	sub esp, 8			;delta sus			76
-	sub esp, 8			;current sus		84
-	sub esp, 4			;mod helper			88
+	sub esp, 4			;even coeff start				4
+	sub esp, 4			;odd coeff start				8
+	sub esp, 4			;coeff lengths in elements		12
 	
-	;clear the out buffer
-	push dword[ebp+20]
-	call vector_clear
+	sub esp, 8			;delta phase					20
+	sub esp, 8			;current phase					28
 	
-	;check if the samples count is 0 or 1
-	mov eax, dword[ebp+24]
-	mov eax, dword[eax]
-	test eax, eax
-	jz dft_fft_calculateFft_internal_end
-	
-	cmp eax, 1
+	;check if the sample count is 0 or 1
+	cmp dword[ebp+36], 0
+	jle dft_fft_calculateFft_internal_end
+	cmp dword[ebp+36], 1
 	jne dft_fft_calculateFft_internal_multiple_samples
-		push 0
-		push dword[ebp+24]
-		call vector_at
-		mov ecx, esp
+		mov eax, dword[ebp+28]
 		push 0
 		push dword[eax]
-		push ecx
-		call complex_createGeo
-		add esp, 12
 		push dword[ebp+20]
-		call vector_push_back
+		call complex_createGeo
 		jmp dft_fft_calculateFft_internal_end
 		
 	dft_fft_calculateFft_internal_multiple_samples:
 	
-	;separate the samples
-	mov eax, dword[ebp+24]
-	mov eax, dword[eax]
+	
+	;calculate the offsets of the subsignal dft coeffs
+	;basically just halving the space in outCoeffs that is not used for this level's coefficients
+	;even start: sizeof(complex)*sampleJumpCount
+	;odd start: sizeof(complex)*(sampleJumpCount+(outCoeffLength-sampleJumpCount)/2)
+	mov eax, dword[ebp+36]
+	mov ecx, dword[ebp+24]
+	sub ecx, eax
+	shr ecx, 1
+	mov dword[ebp-12], ecx
+	add ecx, eax
+	imul eax, SIZE_OF_COMPLEX
+	imul ecx, SIZE_OF_COMPLEX
+	add eax, dword[ebp+20]
+	add ecx, dword[ebp+20]
+	mov dword[ebp-4], eax
+	mov dword[ebp-8], ecx
+	
+	;calculate the even dft
+	mov eax, dword[ebp+36]
 	shr eax, 1
-	mov dword[ebp-68], eax
-	
-	lea eax, [ebp-16]
-	push 4
 	push eax
-	call vector_init
-	
-	lea ecx, [ebp-32]
-	push 4
+	mov ecx, dword[ebp+32]
+	shl ecx, 1
 	push ecx
-	call vector_init
-	
-	mov eax, dword[ebp+24]
-	mov esi, dword[eax+12]
-	xor edi, edi
-	dft_fft_calculateFft_internal_separate_loop_start:
-		lea eax, [ebp-16]
-		push dword[esi+8*edi]
-		push eax
-		call vector_push_back
-		lea eax, [ebp-32]
-		push dword[esi+8*edi+4]
-		push eax
-		call vector_push_back
-		add esp, 16
-		
-		inc edi
-		cmp edi, dword[ebp-68]
-		jl dft_fft_calculateFft_internal_separate_loop_start
-		
-	
-	;calculate the smaller dfts
-	lea eax, [ebp-48]
-	push 8
-	push eax
-	call vector_init
-	
-	lea ecx, [ebp-64]
-	push 8
-	push ecx
-	call vector_init
-	
-	
-	lea eax, [ebp-16]
-	lea ecx, [ebp-48]
-	push eax
-	push ecx
+	push dword[ebp+28]
+	push dword[ebp-12]
+	push dword[ebp-4]
 	call dft_fft_calculateFft_internal
 	
-	lea eax, [ebp-32]
-	lea ecx, [ebp-64]
+	;calculate the odd dft
+	mov eax, dword[ebp+36]
+	shr eax, 1
 	push eax
+	mov ecx, dword[ebp+32]
+	shl ecx, 1
 	push ecx
+	mov eax, dword[ebp+28]
+	mov ecx, dword[ebp+32]
+	lea eax, [eax+4*ecx]
+	push eax
+	push dword[ebp-12]
+	push dword[ebp-8]
 	call dft_fft_calculateFft_internal
 	
-	;calculate the coefficients
-	mov eax, dword[ebp+24]
-	mov eax, dword[eax]
-	cvtsi2ss xmm0, eax
-	rcpss xmm0, xmm0
-	mulss xmm0, dword[PI2]
+	
+	;calculate the coefficients for this dft
+	movss xmm0, dword[PI2]
+	mov eax, dword[ebp+36]
+	cvtsi2ss xmm1, eax
+	rcpss xmm1, xmm1
+	mulss xmm0, xmm1
 	sub esp, 4
 	movss dword[esp], xmm0
 	xor dword[esp], 0x80000000
 	push dword[ONE]
-	lea ecx, [ebp-76]
+	lea ecx, [ebp-20]
 	push ecx
 	call complex_createExp
 	
-	lea edx, [ebp-84]
+	lea edx, [ebp-28]
 	push 0
 	push 0x3f800000
 	push edx
 	call complex_createGeo
 	
-	mov eax, dword[ebp-68]
-	dec eax
-	mov dword[ebp-88], eax		;a bitmask for faster modulo calculation
-	
-	mov eax, dword[ebp+24]
-	mov ebx, dword[eax]
-	xor esi, esi
-	dft_fft_calculateFft_internal_coeff_loop_start:
-		mov edi, esi
-		and edi, dword[ebp-88]			;index in the smaller dfts
+	mov esi, dword[ebp+36]
+	shr esi, 1
+	dec esi					;subsignal index mask in esi ([0:sampleJumpCount-1]->[0:sampleJumpCount/2-1])
+	xor ebx, ebx			;index in ebx
+	dft_fft_calculateFft_internal_loop_start:
+		mov edi, dword[ebp+20]
+		lea edi, [edi+SIZE_OF_COMPLEX*ebx]
 		
-		sub esp, 8
-		
-		lea eax, [ebp-64]
-		push edi
+		;calculate the ebx. coeff
+		mov eax, ebx
+		and eax, esi
+		lea eax, [SIZE_OF_COMPLEX*eax]
+		add eax, dword[ebp-8]
+		lea ecx, [ebp-28]
 		push eax
-		call vector_at
-		add esp, 8
-		
-		mov edx, esp
-		lea ecx, [ebp-84]
 		push ecx
-		push eax
-		push edx
+		push edi
 		call complex_mul
 		add esp, 12
 		
-		lea eax, [ebp-48]
+		mov eax, ebx
+		and eax, esi
+		lea eax, [SIZE_OF_COMPLEX*eax]
+		add eax, dword[ebp-4]
+		push eax
 		push edi
-		push eax
-		call vector_at
-		add esp, 8
-		
-		mov ecx, esp
-		push eax
-		push ecx
-		push ecx
+		push edi
 		call complex_add
 		add esp, 12
 		
-		push dword[ebp+20]
-		call vector_push_back		;complex is on the stack!!!!
-		add esp, 12
-		
-		;update the sus
-		lea eax, [ebp-76]
-		lea ecx, [ebp-84]
+		;update the phase shifter
+		lea eax, [ebp-20]
+		lea ecx, [ebp-28]
 		push eax
 		push ecx
 		push ecx
 		call complex_mul
 		add esp, 12
-	
-		inc esi
-		cmp esi, ebx
-		jl dft_fft_calculateFft_internal_coeff_loop_start
 		
-		
-	;destroy the created vectors
-	lea eax, [ebp-16]
-	push eax
-	call vector_destroy
-	lea ecx, [ebp-32]
-	push ecx
-	call vector_destroy
-	lea edx, [ebp-48]
-	push edx
-	call vector_destroy
-	lea eax, [ebp-64]
-	push eax
-	call vector_destroy
+		inc ebx
+		cmp ebx, dword[ebp+36]
+		jl dft_fft_calculateFft_internal_loop_start
 	
 	dft_fft_calculateFft_internal_end:
 	mov esp, ebp
