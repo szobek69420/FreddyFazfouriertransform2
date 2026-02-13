@@ -16,6 +16,7 @@ mkdir build
 %COMMAND% -fobj src/console.asm -o build/console.o
 %COMMAND% -fobj src/dft.asm -o build/dft.o
 %COMMAND% -fobj src/file.asm -o build/file.o
+%COMMAND% -fobj src/filter.asm -o build/filter.o
 %COMMAND% -fobj src/memory.asm -o build/memory.o
 %COMMAND% -fobj src/string.asm -o build/string.o
 %COMMAND% -fobj src/vector.asm -o build/vector.o
@@ -29,6 +30,7 @@ build/complex.o ^
 build/console.o ^
 build/dft.o ^
 build/file.o ^
+build/filter.o ^
 build/memory.o ^
 build/string.o ^
 build/vector.o ^
